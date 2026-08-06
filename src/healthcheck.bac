@@ -1,0 +1,275 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+#include "esp_bt.h"
+#include "wiring.h"
+#include "config.h"
+#include "encoders.h"
+#include "lifecycle.h"
+#include "i2c.h"
+#include "ToF.h"
+#include "gyro.h"    // <-- NEW
+
+// ---------- TEST DURATIONS ----------
+const uint32_t TOF_TEST_MS      = 10000;
+const uint32_t DRIVE_FWD_MS     = 10000;
+const uint32_t DRIVE_BWD_MS     = 10000;
+
+// ---------- MOTOR CONTROL (LEDC PWM) ----------
+struct MotorPins { int in1, in2, ch1, ch2; };
+MotorPins motorA{MTR_A_IN1, MTR_A_IN2, 0, 1};
+MotorPins motorB{MTR_B_IN1, MTR_B_IN2, 2, 3};
+
+ToF sensors;
+
+const int PWM_FREQ = 20000;
+const int PWM_RES  = 8;
+
+// ---------- Gyro instance ----------
+Gyro gyro;   // uses gyro.cpp backend (MPU6050)
+GyroRates gyroRates;  // reusable buffer for streaming
+
+// ---------------- motor helpers ----------------
+
+void setupMotorPins(const MotorPins& m) {
+  pinMode(m.in1, OUTPUT);
+  pinMode(m.in2, OUTPUT);
+  ledcSetup(m.ch1, PWM_FREQ, PWM_RES);
+  ledcSetup(m.ch2, PWM_FREQ, PWM_RES);
+  ledcAttachPin(m.in1, m.ch1);
+  ledcAttachPin(m.in2, m.ch2);
+  ledcWrite(m.ch1, 0);
+  ledcWrite(m.ch2, 0);
+}
+
+void setMotor(const MotorPins& m, int speed /* -255..255 */) {
+  speed = constrain(speed, -255, 255);
+  if (speed >= 0) { ledcWrite(m.ch1, speed); ledcWrite(m.ch2, 0); }
+  else            { ledcWrite(m.ch1, 0);     ledcWrite(m.ch2, -speed); }
+}
+
+void stopAll(){ setMotor(motorA,0); setMotor(motorB,0); }
+
+// ---------------- serial helpers ----------------
+
+static inline bool enterPressedNow() {
+  // non-blocking: returns true if we see '\r' or '\n'
+  if (!Serial.available()) return false;
+  bool seen = false;
+  while (Serial.available()) {
+    int ch = Serial.read();
+    if (ch == '\r' || ch == '\n') seen = true;
+  }
+  return seen;
+}
+
+void waitForEnter(const char* prompt) {
+  Serial.println();
+  Serial.println(prompt);
+  Serial.println("👉 Press Enter to continue...");
+  // consume any pending bytes first so a stray newline doesn't skip
+  while (Serial.available()) Serial.read();
+  // now block until enter
+  while (true) {
+    if (enterPressedNow()) break;
+    delay(1);
+  }
+}
+
+// ---------------- encoder tests ----------------
+
+void encoderFreeTest() {
+  Serial.println();
+  Serial.println("=== Encoder free-move test ===");
+  Serial.println("Spin the wheels by hand. Press Enter to finish.");
+  resetEncoders();
+
+  uint32_t last = 0;
+  // drain any stray input so we don't instantly exit
+  while (Serial.available()) Serial.read();
+
+  while (true) {
+    if (enterPressedNow()) break;
+    if (millis() - last >= 100) {
+      Serial.printf("%lu ms\tencA=%ld\tencB=%ld\n",
+        (unsigned long)millis(), getEncoderLeft(), getEncoderRight());
+      last = millis();
+    }
+    delay(1);
+  }
+  Serial.println("Encoder test ended ✅");
+}
+
+// Motor test that runs until Enter is pressed
+void driveUntilEnter(int speed, const char* label) {
+  Serial.println();
+  Serial.printf("=== %s (speed=%d) ===\n", label, speed);
+  Serial.println("Press Enter to STOP.");
+  resetEncoders();
+
+  // start motors
+  setMotor(motorA, -speed);
+  setMotor(motorB,  speed);
+
+  uint32_t last = 0;
+  while (true) {
+    if (enterPressedNow()) break;
+    if (millis() - last >= 100) {
+      Serial.printf("%lu ms\tencA=%ld\tencB=%ld\n",
+        (unsigned long)millis(), getEncoderLeft(), getEncoderRight());
+      last = millis();
+    }
+    delay(1);
+  }
+  stopAll();
+  Serial.println("Stopped. ✅");
+}
+
+// ---------------- ToF helpers ----------------
+
+static inline const char* fmtDist(int32_t mm, char* buf, size_t n) {
+  // Formats a non-negative distance (mm) into buf.
+  // Returns buf pointer.
+  if (mm < 0) mm = 0;                 // clamp low
+  if (mm > 8191) mm = 8191;           // clamp high (arbitrary, VL53L1X won’t reach this)
+  snprintf(buf, n, "%ld", (long)mm);
+  return buf;
+}
+
+void printToFUntilEnter(uint32_t /*ms*/) {
+  Serial.println("\n=== ToF (VL53L1X) distance stream (ms, right/center/left in mm) ===");
+  uint32_t t0 = millis();
+  char br[8], bc[8], bl[8];
+
+  while (true) {
+    if (enterPressedNow()) break;
+
+    // 1) Read RAW (uint16_t)
+    uint16_t rr = sensors.getRightDistance();
+    uint16_t rc = sensors.getFrontDistance();
+    uint16_t rl = sensors.getLeftDistance();
+
+    // 2) Format, applying offset ONLY if raw != 0
+    const char* sr = (rr == 0) ? "--" : fmtDist((int32_t)rr + TOF_RIGHT_OFFSET,  br, sizeof(br));
+    const char* sc = (rc == 0) ? "--" : fmtDist((int32_t)rc + TOF_CENTER_OFFSET, bc, sizeof(bc));
+    const char* sl = (rl == 0) ? "--" : fmtDist((int32_t)rl + TOF_LEFT_OFFSET,   bl, sizeof(bl));
+
+    Serial.printf("%lu\t%s\t%s\t%s\n",
+      (unsigned long)(millis() - t0), sr, sc, sl);
+
+    delay(100);
+  }
+}
+
+void driveAndReport(int speed, uint32_t ms, const char* label){
+  Serial.println();
+  Serial.printf("=== %s (speed=%d) ===\n", label, speed);
+  resetEncoders();
+  setMotor(motorA,  speed);
+  setMotor(motorB, -speed);
+  uint32_t t0 = millis(), last = 0;
+  while (millis() - t0 < ms){
+    if (millis() - last >= 100){
+      Serial.printf("%lu ms\tencA=%ld\tencB=%ld\n",
+        (unsigned long)(millis() - t0), getEncoderLeft(), getEncoderRight());
+      last = millis();
+    }
+    delay(1);
+  }
+  stopAll();
+  Serial.println("Stopped.");
+}
+
+// ---------------- Gyro streaming using Gyro class ----------------
+
+void gyroStreamUntilEnter() {
+  Serial.println("\n=== Gyro stream: Gx Gy Gz (deg/s) ===");
+  Serial.println("Press Enter to stop.");
+
+  uint32_t last = 0;
+  while (true) {
+    if (enterPressedNow()) break;
+
+    if (!gyro.readRates(gyroRates)) {
+      Serial.println("Gyro read failed");
+      delay(50);
+      continue;
+    }
+
+    if (millis() - last >= 100) {
+      Serial.printf("%lu\t%.2f\t%.2f\t%.2f\n",
+                    (unsigned long)millis(),
+                    gyroRates.gx_dps,
+                    gyroRates.gy_dps,
+                    gyroRates.gz_dps);
+      last = millis();
+    }
+    delay(1);
+  }
+  Serial.println("Gyro stream ended ✅");
+}
+
+// ---------------- Arduino setup/loop ----------------
+
+void setup() {
+  disableWireless();
+  checkSerial();
+
+  Wire.begin(I2C_SDA, I2C_SCL);   // from wiring.h / your pinmap
+  Wire.setClock(400000); 
+
+  // Quick pin notices
+  Serial.println("\nPin sanity check:");
+  Serial.println("Motor pins are output-capable ✅");
+  if (MTR_A_IN1 == 12) {
+    Serial.println("⚠️  Note: GPIO12 is a boot-strap pin; if boot is flaky, move it to GPIO25.");
+  }
+
+  setupMotorPins(motorA);
+  setupMotorPins(motorB);
+  initEncoders();
+
+  Serial.println("\nInitializing ToF sensors (VL53L1X)...");
+  sensors.initSensors();
+
+  // ======= Step 1: Sensor test (unchanged, 10 s) =======
+  waitForEnter("STEP 1: Sensor test (runs for 10 s).");
+  printToFUntilEnter(TOF_TEST_MS);
+
+  // ======= Step 2: Encoder free-move test =======
+  waitForEnter("STEP 2: Encoder test (spin wheels; ends on Enter).");
+  encoderFreeTest();
+
+  // ======= Step 3: Motor forward =======
+  waitForEnter("STEP 3: Motor test FORWARD (runs until Enter).");
+  driveUntilEnter(+200, "Drive forward");
+
+  // ======= Step 4: Motor backward =======
+  waitForEnter("STEP 4: Motor test BACKWARD (runs until Enter).");
+  driveUntilEnter(-200, "Drive backward");
+
+  // ======= Step 5: Gyro (MPU6050) live test via Gyro class =======
+  Serial.println("\nInitializing gyro (MPU6050 backend)...");
+
+  GyroConfig gcfg{};
+  // Let bus default to &Wire (begin() handles nullptr -> &Wire)
+  gcfg.addr      = 0x68;    // or 0x69 if AD0 is HIGH; adjust if needed
+  gcfg.sample_hz = 100;     // ~100 Hz, similar to your old config
+  // gcfg.map can stay default if your gyro.h sets a sane identity map
+
+  if (!gyro.begin(gcfg)) {
+    Serial.println("Gyro init failed — check SDA/SCL wiring and address.");
+  } else {
+    Serial.println("Gyro ready ✅");
+    Serial.println("Calibrating bias (keep robot still)...");
+    gyro.calibrateBias(2000);   // e.g. 2 s calibration
+    Serial.println("Gyro bias calibrated ✅");
+  }
+
+  waitForEnter("STEP 5: Gyro live test (angular rates; ends on Enter).");
+  gyroStreamUntilEnter();
+
+  Serial.println("\n=== Test sequence complete ===");
+}
+
+void loop() {}
