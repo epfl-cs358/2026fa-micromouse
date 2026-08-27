@@ -8,11 +8,11 @@
 
 ## Project overview
 
-There's a very specific hobby: The one of micromice. Micromice are little robotic “mice” that are placed in a maze, and the aim is to solve the maze as quickly as possible. As you can see in [various videos](https://youtu.be/ZMQbHMgK2rw?si=J3iyXzNXOJgDFyq4), competitors design micromice that manage to solve a maze in a matter of seconds. What is particularly impressing is the speed and precision with which these micromice solve the maze.
+This semester project focuses on micromice which are small autonomous robotic "mice" designed to solve a maze as quickly as possible. As seen in [various videos](https://youtu.be/ZMQbHMgK2rw?si=J3iyXzNXOJgDFyq4), these robots can navigate and complete a maze in just a few seconds, demonstrating remarkable speed and precision.
 <p align="center"><img src="https://github.com/user-attachments/assets/04d95ca0-a9bf-4ada-8f9c-0e8817da04d0" width=700><br><sub>Source: The Fastest Maze-Solving Competition On Earth<br><a>https://youtu.be/ZMQbHMgK2rw?si=60H5i8q6jv-QUGHG</a></sub></p>
 
 
-Just like these spectacular micromice, we are going to build a little micromouse that uses sensors, motors, a microcontroller. But, instead of solving mazes at a high speed, this project focuses on a different but equally interesting robotics challenge: **obstacle avoidance**, similar to a robotic vacuum cleaner. (Full maze solving is a bit involved for the individual project.)
+Just like these spectacular micromice, we are going to build a little micromouse that uses sensors, motors, and a microcontroller. However, instead of solving mazes at a high speed, this project focuses on a different but equally interesting robotics challenge: **obstacle avoidance**, similar to a robotic vacuum cleaner. (Full maze solving is a bit involved for the individual project.)
 
 You will build a small mobile robot capable of navigating an unknown environment, avoiding obstacles, much like a simplified Roomba.
 
