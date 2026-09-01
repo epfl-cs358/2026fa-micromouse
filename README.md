@@ -14,7 +14,17 @@ This semester project focuses on micromice which are small autonomous robotic "m
 
 Just like these spectacular micromice, we are going to build a little micromouse that uses sensors, motors, and a microcontroller. However, instead of solving mazes at a high speed, this project focuses on a different but equally interesting robotics challenge: **obstacle avoidance**, similar to a robotic vacuum cleaner. (Full maze solving is a bit involved for the individual project.)
 
-You will build a small mobile robot capable of navigating an unknown environment, avoiding obstacles, much like a simplified Roomba.
+You will build a small mobile robot capable of navigating an unknown environment, avoiding obstacles, much like a simplified Roomba. Below are some photos of the Micromouse you will build.
+
+<p float="left">
+	<img src="./resources/micromouse1.jpg"  width="250">
+	<img src="./resources/micromouse2.jpg"  width="250">
+</p>  
+<p float="left">
+	<img src="./resources/micromouse3.jpg"  width="250">
+	<img src="./resources/micromouse4.jpg"  width="250">
+</p>  
+
 
 The aim of this project is to get hands-on experience in a number of areas. We'll be learning how to assemble components following a circuit, soldering, 3D design, laser-cutting and programming micro-controllers.
 
