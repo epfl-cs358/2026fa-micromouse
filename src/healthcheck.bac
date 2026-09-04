@@ -8,7 +8,6 @@
 #include "lifecycle.h"
 #include "i2c.h"
 #include "ToF.h"
-#include "gyro.h"    // <-- NEW
 
 // ---------- TEST DURATIONS ----------
 const uint32_t TOF_TEST_MS      = 10000;
@@ -24,10 +23,6 @@ ToF sensors;
 
 const int PWM_FREQ = 20000;
 const int PWM_RES  = 8;
-
-// ---------- Gyro instance ----------
-Gyro gyro;   // uses gyro.cpp backend (MPU6050)
-GyroRates gyroRates;  // reusable buffer for streaming
 
 // ---------------- motor helpers ----------------
 
@@ -137,7 +132,7 @@ static inline const char* fmtDist(int32_t mm, char* buf, size_t n) {
 }
 
 void printToFUntilEnter(uint32_t /*ms*/) {
-  Serial.println("\n=== ToF (VL53L1X) distance stream (ms, right/center/left in mm) ===");
+  Serial.println("\n=== ToF (VL53L1X) distance stream (ms, center in mm) ===");
   uint32_t t0 = millis();
   char br[8], bc[8], bl[8];
 
@@ -145,17 +140,13 @@ void printToFUntilEnter(uint32_t /*ms*/) {
     if (enterPressedNow()) break;
 
     // 1) Read RAW (uint16_t)
-    uint16_t rr = sensors.getRightDistance();
     uint16_t rc = sensors.getFrontDistance();
-    uint16_t rl = sensors.getLeftDistance();
 
     // 2) Format, applying offset ONLY if raw != 0
-    const char* sr = (rr == 0) ? "--" : fmtDist((int32_t)rr + TOF_RIGHT_OFFSET,  br, sizeof(br));
     const char* sc = (rc == 0) ? "--" : fmtDist((int32_t)rc + TOF_CENTER_OFFSET, bc, sizeof(bc));
-    const char* sl = (rl == 0) ? "--" : fmtDist((int32_t)rl + TOF_LEFT_OFFSET,   bl, sizeof(bl));
 
-    Serial.printf("%lu\t%s\t%s\t%s\n",
-      (unsigned long)(millis() - t0), sr, sc, sl);
+    Serial.printf("%lu\t%s\n",
+      (unsigned long)(millis() - t0), sc);
 
     delay(100);
   }
@@ -178,35 +169,6 @@ void driveAndReport(int speed, uint32_t ms, const char* label){
   }
   stopAll();
   Serial.println("Stopped.");
-}
-
-// ---------------- Gyro streaming using Gyro class ----------------
-
-void gyroStreamUntilEnter() {
-  Serial.println("\n=== Gyro stream: Gx Gy Gz (deg/s) ===");
-  Serial.println("Press Enter to stop.");
-
-  uint32_t last = 0;
-  while (true) {
-    if (enterPressedNow()) break;
-
-    if (!gyro.readRates(gyroRates)) {
-      Serial.println("Gyro read failed");
-      delay(50);
-      continue;
-    }
-
-    if (millis() - last >= 100) {
-      Serial.printf("%lu\t%.2f\t%.2f\t%.2f\n",
-                    (unsigned long)millis(),
-                    gyroRates.gx_dps,
-                    gyroRates.gy_dps,
-                    gyroRates.gz_dps);
-      last = millis();
-    }
-    delay(1);
-  }
-  Serial.println("Gyro stream ended ✅");
 }
 
 // ---------------- Arduino setup/loop ----------------
@@ -247,27 +209,6 @@ void setup() {
   // ======= Step 4: Motor backward =======
   waitForEnter("STEP 4: Motor test BACKWARD (runs until Enter).");
   driveUntilEnter(-200, "Drive backward");
-
-  // ======= Step 5: Gyro (MPU6050) live test via Gyro class =======
-  Serial.println("\nInitializing gyro (MPU6050 backend)...");
-
-  GyroConfig gcfg{};
-  // Let bus default to &Wire (begin() handles nullptr -> &Wire)
-  gcfg.addr      = 0x68;    // or 0x69 if AD0 is HIGH; adjust if needed
-  gcfg.sample_hz = 100;     // ~100 Hz, similar to your old config
-  // gcfg.map can stay default if your gyro.h sets a sane identity map
-
-  if (!gyro.begin(gcfg)) {
-    Serial.println("Gyro init failed — check SDA/SCL wiring and address.");
-  } else {
-    Serial.println("Gyro ready ✅");
-    Serial.println("Calibrating bias (keep robot still)...");
-    gyro.calibrateBias(2000);   // e.g. 2 s calibration
-    Serial.println("Gyro bias calibrated ✅");
-  }
-
-  waitForEnter("STEP 5: Gyro live test (angular rates; ends on Enter).");
-  gyroStreamUntilEnter();
 
   Serial.println("\n=== Test sequence complete ===");
 }
